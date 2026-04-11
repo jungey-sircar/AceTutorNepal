@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from './_lib/store';
@@ -11,7 +11,7 @@ import { api } from './_lib/api';
 import { COLORS, SPACING, RADIUS, SHADOWS } from './_lib/theme';
 
 export default function AuthScreen() {
-  const { isAuthenticated, isLoading, login } = useAuthStore();
+  const { login } = useAuthStore();
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
@@ -20,25 +20,14 @@ export default function AuthScreen() {
   const [examType, setExamType] = useState('SEE');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-
-  if (isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Loading ExamAce...</Text>
-      </View>
-    );
-  }
-
-  if (isAuthenticated) {
-    return <Redirect href="/(tabs)/dashboard" />;
-  }
+  const [errorMsg, setErrorMsg] = useState('');
 
   const examTypes = ['SEE', 'NEB +2', 'TU', 'CTEVT', 'Loksewa'];
 
   const handleAuth = async () => {
+    setErrorMsg('');
     if (!email || !password || (!isLogin && !name)) {
-      Alert.alert('Error', 'Please fill in all fields');
+      setErrorMsg('Please fill in all fields');
       return;
     }
     setLoading(true);
@@ -54,7 +43,7 @@ export default function AuthScreen() {
       }
       router.replace('/(tabs)/dashboard');
     } catch (err: any) {
-      Alert.alert('Error', err.message || 'Something went wrong');
+      setErrorMsg(err.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -132,6 +121,13 @@ export default function AuthScreen() {
                 <Text style={[styles.tabText, !isLogin && styles.activeTabText]}>Sign Up</Text>
               </TouchableOpacity>
             </View>
+
+            {errorMsg ? (
+              <View testID="error-message" style={styles.errorBox}>
+                <Ionicons name="alert-circle" size={18} color={COLORS.error} />
+                <Text style={styles.errorText}>{errorMsg}</Text>
+              </View>
+            ) : null}
 
             {!isLogin && (
               <View style={styles.inputGroup}>

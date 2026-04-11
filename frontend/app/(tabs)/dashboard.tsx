@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuthStore } from '../_lib/store';
 import { api } from '../_lib/api';
 import { COLORS, SPACING, RADIUS, SHADOWS } from '../_lib/theme';
@@ -19,7 +19,7 @@ interface DashboardData {
 }
 
 export default function Dashboard() {
-  const { user, isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -43,16 +43,8 @@ export default function Dashboard() {
   }, [user]);
 
   useEffect(() => {
-    if (isAuthenticated) fetchData();
-  }, [isAuthenticated, fetchData]);
-
-  if (authLoading) {
-    return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.primary} /></View>;
-  }
-
-  if (!isAuthenticated) {
-    return <Redirect href="/" />;
-  }
+    fetchData();
+  }, [fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);
