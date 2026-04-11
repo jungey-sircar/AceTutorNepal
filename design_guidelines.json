@@ -1,0 +1,100 @@
+{
+  "theme": {
+    "name": "ExamAce Nepal UI",
+    "archetype": "Archetype 6 (Vibrant Play) with Notion structural inspiration",
+    "mode": "light",
+    "description": "A mix of Duolingo's tactile, colorful gamification and Notion's clean, block-based structural minimalism. Designed to feel like a high-end mobile app.",
+    "emotion": "Encouraging, structured, rewarding, and highly engaging."
+  },
+  "colors": {
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "primary": "#38BDF8",
+    "primary_dark": "#0284C7",
+    "secondary": "#4ADE80",
+    "secondary_dark": "#16A34A",
+    "streak_accent": "#F59E0B",
+    "text_primary": "#0F172A",
+    "text_secondary": "#64748B",
+    "border": "#E2E8F0",
+    "error": "#EF4444"
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Nunito",
+      "body": "Figtree"
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl font-black tracking-tight text-slate-900",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-800",
+      "h3": "text-xl sm:text-2xl font-bold text-slate-800",
+      "body": "text-base leading-relaxed text-slate-600",
+      "label": "text-xs font-bold tracking-widest uppercase text-slate-500"
+    }
+  },
+  "surfaces_and_effects": {
+    "buttons": {
+      "primary": "bg-[#38BDF8] text-white rounded-2xl border-b-4 border-[#0284C7] active:border-b-0 active:translate-y-1 transition-all px-6 py-4 font-bold text-lg",
+      "secondary": "bg-[#4ADE80] text-white rounded-2xl border-b-4 border-[#16A34A] active:border-b-0 active:translate-y-1 transition-all px-6 py-4 font-bold text-lg",
+      "outline": "bg-white text-slate-700 rounded-2xl border-2 border-slate-200 border-b-4 active:border-b-2 active:translate-y-[2px] transition-all px-6 py-4 font-bold text-lg"
+    },
+    "cards": {
+      "base": "bg-white border-2 border-slate-100 rounded-3xl p-6 shadow-sm",
+      "interactive": "bg-white border-2 border-slate-200 rounded-3xl p-6 shadow-sm hover:border-[#38BDF8] hover:-translate-y-1 transition-all cursor-pointer"
+    },
+    "inputs": {
+      "base": "bg-slate-50 border-2 border-slate-200 rounded-2xl focus:border-[#38BDF8] focus:bg-white focus:ring-4 focus:ring-sky-100 transition-all px-5 py-4 text-base font-medium text-slate-900 w-full"
+    }
+  },
+  "layout_and_spacing": {
+    "container": "w-full max-w-md mx-auto min-h-screen bg-slate-50 relative pb-24 shadow-2xl", 
+    "section_gap": "gap-8",
+    "item_gap": "gap-4",
+    "padding": "p-6",
+    "grid": "grid grid-cols-1 sm:grid-cols-2 gap-4"
+  },
+  "components_design": {
+    "bottom_nav": "fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t-2 border-slate-100 px-6 py-4 flex justify-between items-center z-50 rounded-t-[32px] shadow-[0_-8px_30px_rgba(0,0,0,0.04)]",
+    "progress_bar": "h-5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200. Inner: h-full bg-[#4ADE80] rounded-full transition-all duration-500",
+    "streak_badge": "flex items-center gap-2 bg-orange-50 border-2 border-orange-200 text-amber-600 rounded-2xl px-4 py-2 font-black text-sm",
+    "ai_chat_bubble_ai": "bg-green-50 border-2 border-green-100 text-slate-800 rounded-3xl rounded-tl-sm p-5 shadow-sm font-medium",
+    "ai_chat_bubble_user": "bg-[#38BDF8] text-white rounded-3xl rounded-tr-sm p-5 shadow-sm font-medium",
+    "mcq_option": "w-full text-left bg-white border-2 border-slate-200 border-b-4 rounded-2xl p-4 font-semibold text-slate-700 hover:bg-slate-50 active:border-b-2 active:translate-y-[2px] transition-all mb-3",
+    "mcq_option_selected": "w-full text-left bg-sky-50 border-2 border-[#38BDF8] border-b-4 rounded-2xl p-4 font-semibold text-sky-700 mb-3"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instructions": "Use with strokeWidth={2.5} for a chunkier, more playful look. Size 28px for bottom nav, 20px-24px for inline icons."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://static.prod-images.emergentagent.com/jobs/043d9f03-f0c6-42f0-83a3-fd711690ee29/images/fef905df66ce01107673338bbeec7421dfe9f11f4f2d01156d49e1ca708d0118.png",
+        "description": "3D stack of books with glowing lightbulb in light blue/green",
+        "category": "hero, onboarding, empty_state, mascot"
+      },
+      {
+        "url": "https://static.prod-images.emergentagent.com/jobs/043d9f03-f0c6-42f0-83a3-fd711690ee29/images/c2bd31c510f4b6dbe03e23494b4b2c7763cbbe69765431c7338fd05d129d6245.png",
+        "description": "3D glowing golden flame for daily streak",
+        "category": "dashboard_streak, gamification_reward"
+      },
+      {
+        "url": "https://static.prod-images.emergentagent.com/jobs/043d9f03-f0c6-42f0-83a3-fd711690ee29/images/2338d5e8e5ab20dfce10ef8c68f122c838bf427d322b3adc10dfd68fe2f9777a.png",
+        "description": "3D graduation cap on smartphone with confetti",
+        "category": "exam_completion, success_modal, milestone, mock_exam_result"
+      }
+    ]
+  },
+  "testing": {
+    "guidelines": "All interactive and key informational elements MUST include a data-testid attribute. Use kebab-case and role-based naming (e.g., 'login-submit-button', 'dashboard-streak-counter', 'mcq-option-a')."
+  },
+  "instructions_to_main_agent": [
+    "Build a mobile-first UI using React and Tailwind. To simulate the mobile app experience on web, constrain the main layout to a mobile width (e.g., max-w-md mx-auto).",
+    "Use Shadcn UI components but heavily override their styles using the tactile/Duolingo-inspired classes provided in 'surfaces_and_effects'. Remove default Shadcn rigid borders/shadows.",
+    "Implement the bottom navigation bar so it remains permanently fixed at the bottom of the screen (on mobile sizes).",
+    "Import Nunito and Figtree fonts from Google Fonts and configure them in tailwind.config.js.",
+    "For the MCQ Practice, use the tactile button styles for options. They should feel very satisfying to tap.",
+    "Strictly use the provided image URLs. Do not insert placeholders.",
+    "Ensure generous spacing (p-6, gap-8) as per the Notion inspiration to keep the UI from feeling cluttered despite the vibrant colors."
+  ]
+}
