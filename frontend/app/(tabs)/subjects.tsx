@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../_lib/store';
 import { api } from '../_lib/api';
 import { COLORS, SPACING, RADIUS, SHADOWS } from '../_lib/theme';
+import { fetchWithCache } from '../_lib/cache';
 
 export default function SubjectsScreen() {
   const { user } = useAuthStore();
@@ -16,6 +17,7 @@ export default function SubjectsScreen() {
   const [selectedExam, setSelectedExam] = useState<string>('');
   const [subjects, setSubjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     loadExams();
@@ -27,8 +29,9 @@ export default function SubjectsScreen() {
 
   const loadExams = async () => {
     try {
-      const data = await api.get<any[]>('/exams');
+      const { data, fromCache } = await fetchWithCache('exams', () => api.get<any[]>('/exams'));
       setExams(data);
+      setIsOffline(fromCache);
       const userExam = (user?.exam_type || 'SEE').toLowerCase();
       const match = data.find((e: any) => e.exam_id === userExam);
       setSelectedExam(match ? match.exam_id : data[0]?.exam_id || '');
@@ -38,8 +41,12 @@ export default function SubjectsScreen() {
   const loadSubjects = async (examId: string) => {
     setLoading(true);
     try {
-      const data = await api.get<any[]>(`/subjects?exam_id=${examId}`);
+      const { data, fromCache } = await fetchWithCache(
+        `subjects_${examId}`,
+        () => api.get<any[]>(`/subjects?exam_id=${examId}`)
+      );
       setSubjects(data);
+      setIsOffline(fromCache);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -48,8 +55,16 @@ export default function SubjectsScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Subjects</Text>
-        <Text style={styles.subtitle}>Choose your exam and explore subjects</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {isOffline && (
+            <View testID="offline-badge" style={styles.offlineBadge}>
+              <Ionicons name="cloud-offline" size={14} color={COLORS.streakAccent} />
+              <Text style={styles.offlineText}>Offline</Text>
+            </View>
+          )}
+        </View>
       </View>
+      <Text style={styles.subtitle}>Choose your exam and explore subjects</Text>
 
       {/* Exam Selector */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.examScroll} contentContainerStyle={styles.examScrollContent}>
@@ -108,9 +123,14 @@ export default function SubjectsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  header: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg },
+  header: { paddingHorizontal: SPACING.lg, paddingTop: SPACING.lg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 28, fontWeight: '900', color: COLORS.textPrimary },
-  subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
+  subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4, paddingHorizontal: SPACING.lg },
+  offlineBadge: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.streakLight,
+    borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4, gap: 4,
+  },
+  offlineText: { fontSize: 11, fontWeight: '700', color: COLORS.streakAccent },
   examScroll: { maxHeight: 60, marginTop: SPACING.md },
   examScrollContent: { paddingHorizontal: SPACING.lg, gap: SPACING.sm },
   examPill: {

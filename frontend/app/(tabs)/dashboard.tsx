@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '../_lib/store';
 import { api } from '../_lib/api';
 import { COLORS, SPACING, RADIUS, SHADOWS } from '../_lib/theme';
+import { fetchWithCache } from '../_lib/cache';
 
 interface DashboardData {
   total_questions_attempted: number;
@@ -29,11 +30,13 @@ export default function Dashboard() {
   const fetchData = useCallback(async () => {
     try {
       const [dashRes, subRes] = await Promise.all([
-        api.get<DashboardData>('/analytics/dashboard'),
-        api.get<any[]>(`/subjects?exam_id=${(user?.exam_type || 'SEE').toLowerCase()}`),
+        fetchWithCache('dashboard', () => api.get<DashboardData>('/analytics/dashboard')),
+        fetchWithCache(`subjects_${(user?.exam_type || 'SEE').toLowerCase()}`, () =>
+          api.get<any[]>(`/subjects?exam_id=${(user?.exam_type || 'SEE').toLowerCase()}`)
+        ),
       ]);
-      setData(dashRes);
-      setSubjects(subRes);
+      setData(dashRes.data);
+      setSubjects(subRes.data);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
     } finally {

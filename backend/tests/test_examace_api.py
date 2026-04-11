@@ -1,10 +1,11 @@
 """
 ExamAce Nepal - Backend API Tests
-Tests: Auth (register, login, JWT), Content (exams, subjects, chapters, questions), Practice, Analytics
+Tests: Auth (register, login, JWT), Content (exams, subjects, chapters, questions), Practice, Analytics, Referral, Cache
 """
 import pytest
 import requests
 import os
+import time
 
 # Read from frontend .env or use public URL
 def get_base_url():
@@ -405,3 +406,215 @@ class TestAI:
             print("⚠ AI explain endpoint exists but AI service may be unavailable")
         else:
             assert False, f"Unexpected status code: {response.status_code}"
+
+# ==================== REFERRAL TESTS ====================
+
+class TestReferral:
+    """Referral system tests - registration with code, apply code, info endpoint"""
+    
+    def test_register_with_referral_code(self, api_client):
+        """POST /api/auth/register with referral_code grants premium to both users"""
+        # Create referrer user first
+        referrer_email = f"referrer_{os.urandom(4).hex()}@examace.com"
+        referrer_payload = {
+            "name": "Referrer User",
+            "email": referrer_email,
+            "password": "Referrer123",
+            "exam_type": "SEE"
+        }
+        
+        referrer_response = api_client.post(f"{BASE_URL}/api/auth/register", json=referrer_payload)
+        assert referrer_response.status_code in [200, 201]
+        referrer_data = referrer_response.json()
+        referrer_code = referrer_data['user']['referral_code']
+        referrer_token = referrer_data['token']
+        
+        print(f"✓ Referrer created with code: {referrer_code}")
+        
+        # Create referee user with referral code
+        referee_email = f"referee_{os.urandom(4).hex()}@examace.com"
+        referee_payload = {
+            "name": "Referee User",
+            "email": referee_email,
+            "password": "Referee123",
+            "exam_type": "SEE",
+            "referral_code": referrer_code
+        }
+        
+        referee_response = api_client.post(f"{BASE_URL}/api/auth/register", json=referee_payload)
+        assert referee_response.status_code in [200, 201]
+        referee_data = referee_response.json()
+        
+        # Verify referee got premium
+        assert referee_data['user']['subscription_status'] == 'premium', "Referee should get premium"
+        print(f"✓ Referee registered with referral code and got premium")
+        
+        # Verify referrer got premium by checking /api/referral/info
+        headers = {"Authorization": f"Bearer {referrer_token}"}
+        info_response = api_client.get(f"{BASE_URL}/api/referral/info", headers=headers)
+        assert info_response.status_code == 200
+        info_data = info_response.json()
+        
+        assert info_data['referral_count'] >= 1, "Referrer should have at least 1 referral"
+        assert info_data['subscription_status'] == 'premium', "Referrer should get premium"
+        print(f"✓ Referrer got premium - referral count: {info_data['referral_count']}")
+    
+    def test_referral_info_endpoint(self, api_client, test_user_token):
+        """GET /api/referral/info returns referral data"""
+        headers = {"Authorization": f"Bearer {test_user_token}"}
+        response = api_client.get(f"{BASE_URL}/api/referral/info", headers=headers)
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert 'referral_code' in data
+        assert 'referral_count' in data
+        assert 'referred_users' in data
+        assert 'subscription_status' in data
+        assert 'premium_expires' in data
+        
+        assert len(data['referral_code']) == 6, "Referral code should be 6 characters"
+        assert isinstance(data['referral_count'], int)
+        assert isinstance(data['referred_users'], list)
+        print(f"✓ Referral info endpoint working - code: {data['referral_code']}, count: {data['referral_count']}")
+    
+    def test_apply_referral_code_valid(self, api_client):
+        """POST /api/referral/apply with valid code grants premium"""
+        # Create referrer
+        referrer_email = f"ref_apply_{os.urandom(4).hex()}@examace.com"
+        referrer_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "Referrer",
+            "email": referrer_email,
+            "password": "Test123",
+            "exam_type": "SEE"
+        })
+        referrer_data = referrer_response.json()
+        referrer_code = referrer_data['user']['referral_code']
+        
+        # Create user who will apply code
+        user_email = f"user_apply_{os.urandom(4).hex()}@examace.com"
+        user_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "User",
+            "email": user_email,
+            "password": "Test123",
+            "exam_type": "SEE"
+        })
+        user_data = user_response.json()
+        user_token = user_data['token']
+        
+        # Apply referral code
+        headers = {"Authorization": f"Bearer {user_token}"}
+        apply_response = api_client.post(f"{BASE_URL}/api/referral/apply", 
+            json={"referral_code": referrer_code}, headers=headers)
+        
+        assert apply_response.status_code == 200
+        apply_data = apply_response.json()
+        
+        assert apply_data['success'] == True
+        assert 'message' in apply_data
+        assert apply_data['user']['subscription_status'] == 'premium'
+        print(f"✓ Apply referral code working - user got premium")
+    
+    def test_apply_referral_code_invalid(self, api_client, test_user_token):
+        """POST /api/referral/apply with invalid code fails"""
+        headers = {"Authorization": f"Bearer {test_user_token}"}
+        response = api_client.post(f"{BASE_URL}/api/referral/apply", 
+            json={"referral_code": "INVALID"}, headers=headers)
+        
+        assert response.status_code == 404, "Should reject invalid referral code"
+        print("✓ Invalid referral code rejection working")
+    
+    def test_apply_referral_code_self(self, api_client):
+        """POST /api/referral/apply with own code fails"""
+        # Create user
+        user_email = f"self_ref_{os.urandom(4).hex()}@examace.com"
+        user_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "Self Referrer",
+            "email": user_email,
+            "password": "Test123",
+            "exam_type": "SEE"
+        })
+        user_data = user_response.json()
+        user_token = user_data['token']
+        user_code = user_data['user']['referral_code']
+        
+        # Try to apply own code
+        headers = {"Authorization": f"Bearer {user_token}"}
+        response = api_client.post(f"{BASE_URL}/api/referral/apply", 
+            json={"referral_code": user_code}, headers=headers)
+        
+        assert response.status_code == 400, "Should reject self-referral"
+        print("✓ Self-referral rejection working")
+    
+    def test_apply_referral_code_duplicate(self, api_client):
+        """POST /api/referral/apply when already used fails"""
+        # Create referrer
+        referrer_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "Referrer",
+            "email": f"ref_dup_{os.urandom(4).hex()}@examace.com",
+            "password": "Test123",
+            "exam_type": "SEE"
+        })
+        referrer_code = referrer_response.json()['user']['referral_code']
+        
+        # Create user and apply code
+        user_response = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "User",
+            "email": f"user_dup_{os.urandom(4).hex()}@examace.com",
+            "password": "Test123",
+            "exam_type": "SEE",
+            "referral_code": referrer_code  # Apply during registration
+        })
+        user_token = user_response.json()['token']
+        
+        # Try to apply another code
+        another_referrer = api_client.post(f"{BASE_URL}/api/auth/register", json={
+            "name": "Another",
+            "email": f"another_{os.urandom(4).hex()}@examace.com",
+            "password": "Test123",
+            "exam_type": "SEE"
+        })
+        another_code = another_referrer.json()['user']['referral_code']
+        
+        headers = {"Authorization": f"Bearer {user_token}"}
+        response = api_client.post(f"{BASE_URL}/api/referral/apply", 
+            json={"referral_code": another_code}, headers=headers)
+        
+        assert response.status_code == 400, "Should reject duplicate referral usage"
+        print("✓ Duplicate referral rejection working")
+
+# ==================== CACHE TESTS ====================
+
+class TestCache:
+    """Offline cache endpoint tests"""
+    
+    def test_cache_content_endpoint(self, api_client):
+        """GET /api/cache/content returns all cacheable content"""
+        response = api_client.get(f"{BASE_URL}/api/cache/content")
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert 'subjects' in data
+        assert 'chapters' in data
+        assert 'questions' in data
+        assert 'cached_at' in data
+        
+        assert isinstance(data['subjects'], list)
+        assert isinstance(data['chapters'], list)
+        assert isinstance(data['questions'], list)
+        
+        print(f"✓ Cache content endpoint working - {len(data['subjects'])} subjects, {len(data['chapters'])} chapters, {len(data['questions'])} questions")
+    
+    def test_cache_content_filtered_by_exam(self, api_client):
+        """GET /api/cache/content?exam_id=see filters by exam"""
+        response = api_client.get(f"{BASE_URL}/api/cache/content?exam_id=see")
+        
+        assert response.status_code == 200
+        data = response.json()
+        
+        # All subjects should be for SEE exam
+        for subject in data['subjects']:
+            assert subject['exam_id'] == 'see'
+        
+        print(f"✓ Cache content filtering working - {len(data['subjects'])} SEE subjects")

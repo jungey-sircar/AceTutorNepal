@@ -18,6 +18,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 import httpx
+import random
+import string
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 ROOT_DIR = Path(__file__).parent
@@ -48,6 +50,7 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str
     exam_type: str = "SEE"
+    referral_code: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -60,6 +63,11 @@ class UserResponse(BaseModel):
     exam_type: str
     subscription_status: str = "free"
     daily_streak: int = 0
+    referral_code: str = ""
+    premium_expires: Optional[str] = None
+
+class ApplyReferralRequest(BaseModel):
+    referral_code: str
 
 class TokenResponse(BaseModel):
     token: str
@@ -148,6 +156,26 @@ async def update_streak(user_id: str):
         {'$set': {'daily_streak': new_streak, 'last_active': now.isoformat()}}
     )
 
+def generate_referral_code():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+async def grant_premium(user_id: str, days: int = 7):
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    await db.users.update_one(
+        {'user_id': user_id},
+        {'$set': {'subscription_status': 'premium', 'premium_expires': expires}}
+    )
+
+def build_user_response(user: dict) -> UserResponse:
+    return UserResponse(
+        user_id=user['user_id'], name=user['name'], email=user['email'],
+        exam_type=user.get('exam_type', 'SEE'),
+        subscription_status=user.get('subscription_status', 'free'),
+        daily_streak=user.get('daily_streak', 0),
+        referral_code=user.get('referral_code', ''),
+        premium_expires=user.get('premium_expires'),
+    )
+
 # ==================== AUTH ROUTES ====================
 
 @api.post("/auth/register", response_model=TokenResponse)
@@ -157,6 +185,11 @@ async def register(data: UserRegister):
         raise HTTPException(400, 'Email already registered')
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
+    referral_code = generate_referral_code()
+    # Ensure unique referral code
+    while await db.users.find_one({'referral_code': referral_code}, {'_id': 0}):
+        referral_code = generate_referral_code()
+
     user_doc = {
         'user_id': user_id,
         'name': data.name,
@@ -165,17 +198,33 @@ async def register(data: UserRegister):
         'exam_type': data.exam_type,
         'subscription_status': 'free',
         'daily_streak': 1,
+        'referral_code': referral_code,
+        'referred_by': None,
+        'referral_count': 0,
+        'premium_expires': None,
         'last_active': datetime.now(timezone.utc).isoformat(),
         'created_at': datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user_doc)
+
+    # Handle referral code from registration
+    if data.referral_code:
+        referrer = await db.users.find_one({'referral_code': data.referral_code.upper()}, {'_id': 0})
+        if referrer and referrer['user_id'] != user_id:
+            await db.users.update_one({'user_id': user_id}, {'$set': {'referred_by': referrer['user_id']}})
+            await db.users.update_one({'user_id': referrer['user_id']}, {'$inc': {'referral_count': 1}})
+            await grant_premium(user_id, 7)
+            await grant_premium(referrer['user_id'], 7)
+            user_doc['subscription_status'] = 'premium'
 
     token = create_token(user_id)
     return TokenResponse(
         token=token,
         user=UserResponse(
             user_id=user_id, name=data.name, email=data.email,
-            exam_type=data.exam_type, subscription_status='free', daily_streak=1
+            exam_type=data.exam_type,
+            subscription_status=user_doc.get('subscription_status', 'free'),
+            daily_streak=1, referral_code=referral_code,
         )
     )
 
@@ -189,24 +238,72 @@ async def login(data: UserLogin):
     updated = await db.users.find_one({'user_id': user['user_id']}, {'_id': 0})
 
     token = create_token(user['user_id'])
-    return TokenResponse(
-        token=token,
-        user=UserResponse(
-            user_id=updated['user_id'], name=updated['name'], email=updated['email'],
-            exam_type=updated['exam_type'],
-            subscription_status=updated.get('subscription_status', 'free'),
-            daily_streak=updated.get('daily_streak', 0)
-        )
-    )
+    return TokenResponse(token=token, user=build_user_response(updated))
 
 @api.get("/auth/me", response_model=UserResponse)
 async def get_me(user: dict = Depends(get_current_user)):
-    return UserResponse(
-        user_id=user['user_id'], name=user['name'], email=user['email'],
-        exam_type=user.get('exam_type', 'SEE'),
-        subscription_status=user.get('subscription_status', 'free'),
-        daily_streak=user.get('daily_streak', 0)
-    )
+    return build_user_response(user)
+
+# ==================== REFERRAL ROUTES ====================
+
+@api.get("/referral/info")
+async def get_referral_info(user: dict = Depends(get_current_user)):
+    referral_count = user.get('referral_count', 0)
+    referred_users = await db.users.find(
+        {'referred_by': user['user_id']}, {'_id': 0, 'name': 1, 'created_at': 1}
+    ).to_list(50)
+    return {
+        'referral_code': user.get('referral_code', ''),
+        'referral_count': referral_count,
+        'referred_users': referred_users,
+        'subscription_status': user.get('subscription_status', 'free'),
+        'premium_expires': user.get('premium_expires'),
+    }
+
+@api.post("/referral/apply")
+async def apply_referral(data: ApplyReferralRequest, user: dict = Depends(get_current_user)):
+    if user.get('referred_by'):
+        raise HTTPException(400, 'You have already used a referral code')
+
+    code = data.referral_code.strip().upper()
+    referrer = await db.users.find_one({'referral_code': code}, {'_id': 0})
+    if not referrer:
+        raise HTTPException(404, 'Invalid referral code')
+    if referrer['user_id'] == user['user_id']:
+        raise HTTPException(400, 'You cannot use your own referral code')
+
+    await db.users.update_one({'user_id': user['user_id']}, {'$set': {'referred_by': referrer['user_id']}})
+    await db.users.update_one({'user_id': referrer['user_id']}, {'$inc': {'referral_count': 1}})
+    await grant_premium(user['user_id'], 7)
+    await grant_premium(referrer['user_id'], 7)
+
+    updated_user = await db.users.find_one({'user_id': user['user_id']}, {'_id': 0})
+    return {
+        'success': True,
+        'message': 'Referral applied! Both you and your friend get 1 week premium.',
+        'user': build_user_response(updated_user).model_dump(),
+    }
+
+# ==================== OFFLINE CACHE ROUTES ====================
+
+@api.get("/cache/content")
+async def get_cacheable_content(exam_id: Optional[str] = None):
+    """Return all content for offline caching in a single request."""
+    query = {'exam_id': exam_id} if exam_id else {}
+    subjects = await db.subjects.find(query, {'_id': 0}).to_list(100)
+    subject_ids = [s['subject_id'] for s in subjects]
+
+    chapters = await db.chapters.find({'subject_id': {'$in': subject_ids}}, {'_id': 0}).sort('order', 1).to_list(500)
+    chapter_ids = [c['chapter_id'] for c in chapters]
+
+    questions = await db.questions.find({'chapter_id': {'$in': chapter_ids}}, {'_id': 0}).to_list(5000)
+
+    return {
+        'subjects': subjects,
+        'chapters': chapters,
+        'questions': questions,
+        'cached_at': datetime.now(timezone.utc).isoformat(),
+    }
 
 # Google OAuth
 @api.post("/auth/google/init")
@@ -913,14 +1010,32 @@ async def seed_data():
     await db.questions.create_index([('subject_id', 1), ('chapter_id', 1), ('difficulty', 1)])
     await db.user_attempts.create_index([('user_id', 1), ('created_at', -1)])
     await db.chat_messages.create_index([('session_id', 1), ('created_at', 1)])
+    await db.users.create_index('referral_code', unique=True, sparse=True)
 
     logger.info(f"Seeded: {len(exams)} exams, {len(all_subjects)} subjects, {len(all_chapters)} chapters, {len(all_questions)} questions")
+
+async def migrate_existing_users():
+    """Add referral_code to users that don't have one."""
+    users_without_code = await db.users.find(
+        {'referral_code': {'$exists': False}}, {'_id': 0, 'user_id': 1}
+    ).to_list(10000)
+    for u in users_without_code:
+        code = generate_referral_code()
+        while await db.users.find_one({'referral_code': code}, {'_id': 0}):
+            code = generate_referral_code()
+        await db.users.update_one(
+            {'user_id': u['user_id']},
+            {'$set': {'referral_code': code, 'referral_count': 0, 'referred_by': None, 'premium_expires': None}}
+        )
+    if users_without_code:
+        logger.info(f"Migrated {len(users_without_code)} users with referral codes")
 
 # ==================== STARTUP & MIDDLEWARE ====================
 
 @app.on_event("startup")
 async def startup():
     await seed_data()
+    await migrate_existing_users()
 
 @app.on_event("shutdown")
 async def shutdown():

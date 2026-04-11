@@ -9,6 +9,8 @@ export interface User {
   exam_type: string;
   subscription_status: string;
   daily_streak: number;
+  referral_code?: string;
+  premium_expires?: string | null;
 }
 
 interface AuthStore {
