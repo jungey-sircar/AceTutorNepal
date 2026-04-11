@@ -21,6 +21,7 @@ export default function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [referralCode, setReferralCode] = useState('');
 
   const examTypes = ['SEE', 'NEB +2', 'TU', 'CTEVT', 'Loksewa'];
 
@@ -38,6 +39,7 @@ export default function AuthScreen() {
       } else {
         const res = await api.post<{ token: string; user: any }>('/auth/register', {
           name, email, password, exam_type: examType,
+          referral_code: referralCode.trim() || undefined,
         });
         await login(res.token, res.user);
       }
@@ -192,6 +194,22 @@ export default function AuthScreen() {
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
+              </View>
+            )}
+
+            {!isLogin && (
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Referral Code (Optional)</Text>
+                <TextInput
+                  testID="referral-code-input"
+                  style={styles.input}
+                  value={referralCode}
+                  onChangeText={setReferralCode}
+                  placeholder="Enter friend's code for free premium"
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  placeholderTextColor={COLORS.textSecondary}
+                />
               </View>
             )}
 

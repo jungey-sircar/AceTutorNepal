@@ -11,15 +11,17 @@ AI-powered exam preparation platform for Nepali students (TU, CTEVT, Loksewa, SE
 
 ## Features Implemented (MVP)
 1. **Authentication** - Email/password registration & login, Google OAuth flow, JWT tokens, visual error feedback
-2. **Dashboard** - Welcome greeting, daily streak badge, stats (questions/accuracy/streak), quick action cards, subject list for user's exam type
-3. **Subjects Browser** - Exam type filter (SEE, NEB+2, TU, CTEVT, Loksewa), subject cards with chapter counts, search by exam
+2. **Dashboard** - Welcome greeting, daily streak badge, stats (questions/accuracy/streak), quick action cards, subject list for user's exam type, offline-aware data loading
+3. **Subjects Browser** - Exam type filter (SEE, NEB+2, TU, CTEVT, Loksewa), subject cards with chapter counts, offline badge indicator, cached data fallback
 4. **Subject Detail** - Chapter list with Study/Practice buttons per chapter
 5. **Chapter Detail** - Study mode (Q&A with expandable answers & explanations), chapter practice launch
 6. **Practice System** - Subject/difficulty/count selection, MCQ quiz with 30s timer, instant feedback (correct/incorrect), stored explanations + AI explanations, progress tracking
 7. **AI Tutor Chat** - GPT-5.2 powered conversational tutor, quick prompts, session management, new chat creation
-8. **Profile** - User info, avatar, stats grid, premium upgrade (MOCKED), about, logout
+8. **Profile** - User info, avatar, stats grid, referral section, offline cache management, premium upgrade, about, logout
 9. **Analytics** - Dashboard stats, accuracy tracking, streak management, weak subject detection
 10. **Auth Persistence** - Token stored in AsyncStorage, auto-redirect on app open
+11. **Referral System** - Unique 6-char codes, share button, apply code on signup or profile, both users get 1 week premium, referral count tracking
+12. **Offline Caching** - Network-first with stale cache fallback (fetchWithCache utility), cache size tracking, clear cache from profile, 24h TTL, bulk content download endpoint
 
 ## Database Collections
 - `users` - User accounts with exam_type, streak, subscription
