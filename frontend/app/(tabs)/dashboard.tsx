@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl,
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../_lib/store';
 import { api } from '../_lib/api';
@@ -20,12 +20,13 @@ interface DashboardData {
 }
 
 export default function Dashboard() {
-  const { user, isAuthenticated } = useAuthStore();
+  const { user } = useAuthStore();
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
@@ -72,6 +73,24 @@ export default function Dashboard() {
           </View>
         </View>
 
+        {/* Global Search Bar */}
+        <TouchableOpacity
+          style={styles.searchBarContainer}
+          onPress={() => router.push({ pathname: '/search', params: { initial_query: searchInput } })}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="search" size={20} color={COLORS.textSecondary} />
+          <TextInput
+            style={styles.searchBarInput}
+            placeholder="Search papers, notes, videos..."
+            placeholderTextColor={COLORS.textSecondary}
+            value={searchInput}
+            onChangeText={setSearchInput}
+            editable={false}
+          />
+          <MaterialIcons name="tune" size={20} color={COLORS.primary} />
+        </TouchableOpacity>
+
         {/* Stats Row */}
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { backgroundColor: COLORS.primaryLight }]}>
@@ -112,12 +131,31 @@ export default function Dashboard() {
           </TouchableOpacity>
         </View>
 
+        {/* Question Bank & Notes */}
+        <Text style={styles.sectionTitle}>Study Resources</Text>
+        <TouchableOpacity
+          testID="question-bank-btn"
+          style={styles.resourceCard}
+          onPress={() => router.push('/(tabs)/question-bank')}
+        >
+          <View style={styles.resourceIcon}>
+            <Ionicons name="bookmarks" size={28} color={COLORS.primaryDark} />
+          </View>
+          <View style={styles.resourceInfo}>
+            <Text style={styles.resourceTitle}>Question Bank & Notes</Text>
+            <Text style={styles.resourceDesc} numberOfLines={2}>
+              Explore academic content by level, board, program, semester, and subject.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
+        </TouchableOpacity>
+
         {/* Subjects */}
         <Text style={styles.sectionTitle}>Your Subjects ({user?.exam_type || 'SEE'})</Text>
         {loading ? (
           <ActivityIndicator color={COLORS.primary} style={{ marginTop: SPACING.lg }} />
         ) : (
-          subjects.map((subject) => (
+          subjects.map((subject: any) => (
             <TouchableOpacity
               key={subject.subject_id}
               testID={`subject-card-${subject.subject_id}`}
@@ -151,8 +189,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.streakLight,
     borderWidth: 2, borderColor: '#FDE68A', borderRadius: RADIUS.xl, paddingHorizontal: 14, paddingVertical: 8,
   },
-  streakCount: { fontWeight: '900', fontSize: 18, color: COLORS.streakAccent, marginLeft: 6 },
-  statsRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.lg },
+   streakCount: { fontWeight: '900', fontSize: 18, color: COLORS.streakAccent, marginLeft: 6 },
+   searchBarContainer: {
+     flexDirection: 'row',
+     alignItems: 'center',
+     backgroundColor: COLORS.surface,
+     borderRadius: RADIUS.lg,
+     paddingHorizontal: SPACING.md,
+     height: 44,
+     marginBottom: SPACING.lg,
+     borderWidth: 1,
+     borderColor: COLORS.border,
+   },
+   searchBarInput: {
+     flex: 1,
+     marginHorizontal: SPACING.sm,
+     fontSize: 16,
+     color: COLORS.text,
+   },
+   statsRow: { flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.lg },
   statCard: {
     flex: 1, borderRadius: RADIUS.xl, padding: SPACING.md, alignItems: 'center',
     borderWidth: 1, borderColor: COLORS.border,
@@ -166,6 +221,18 @@ const styles = StyleSheet.create({
     alignItems: 'center', borderWidth: 2, borderBottomWidth: 4, ...SHADOWS.sm,
   },
   actionText: { fontWeight: '700', fontSize: 13, color: COLORS.textPrimary, marginTop: SPACING.sm },
+  resourceCard: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.lg,
+    borderWidth: 2, borderColor: COLORS.border, ...SHADOWS.sm,
+  },
+  resourceIcon: {
+    width: 52, height: 52, borderRadius: RADIUS.lg, backgroundColor: COLORS.primaryLight,
+    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.md,
+  },
+  resourceInfo: { flex: 1, marginRight: SPACING.sm },
+  resourceTitle: { fontSize: 16, fontWeight: '800', color: COLORS.textPrimary },
+  resourceDesc: { fontSize: 13, color: COLORS.textSecondary, marginTop: 4, lineHeight: 18 },
   subjectCard: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.surface,
     borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.sm,

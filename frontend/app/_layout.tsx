@@ -44,6 +44,10 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="subject/[id]" />
         <Stack.Screen name="chapter/[id]" />
+        <Stack.Screen name="question-bank/[node]" />
+        <Stack.Screen name="search" />
+        <Stack.Screen name="admin" />
+        <Stack.Screen name="teacher" />
         <Stack.Screen name="quiz" options={{ gestureEnabled: false }} />
       </Stack>
     </>

@@ -21,8 +21,23 @@ import httpx
 import random
 import string
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+try:
+    from question_bank import get_question_bank_node, get_question_bank_roots
+except ImportError:  # pragma: no cover - fallback for package-style imports
+    from .question_bank import get_question_bank_node, get_question_bank_roots
 
 ROOT_DIR = Path(__file__).parent
+
+try:
+    from resource_models import (
+        PastQuestionPaper, StudyNote, VideoSolution, ImportantQuestion,
+        Assignment, StudentSubmission, ResourceStats, SearchResult
+    )
+except ImportError:
+    from .resource_models import (
+        PastQuestionPaper, StudyNote, VideoSolution, ImportantQuestion,
+        Assignment, StudentSubmission, ResourceStats, SearchResult
+    )
 load_dotenv(ROOT_DIR / '.env')
 
 # Config
@@ -31,6 +46,8 @@ db_name = os.environ['DB_NAME']
 JWT_SECRET = os.environ.get('JWT_SECRET', 'examace-fallback-secret')
 JWT_ALGORITHM = 'HS256'
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+AWS_S3_BUCKET = os.environ.get('AWS_S3_BUCKET', '')
+AWS_REGION = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-east-1'))
 
 # MongoDB
 client = AsyncIOMotorClient(mongo_url)
@@ -302,109 +319,627 @@ async def get_cacheable_content(exam_id: Optional[str] = None):
         'subjects': subjects,
         'chapters': chapters,
         'questions': questions,
+        'question_bank': get_question_bank_roots(),
         'cached_at': datetime.now(timezone.utc).isoformat(),
     }
 
+# ==================== QUESTION BANK ROUTES ====================
+
+@api.get("/question-bank")
+async def get_question_bank_roots_endpoint():
+    return get_question_bank_roots()
+
+
+@api.get("/question-bank/{node_id}")
+async def get_question_bank_node_endpoint(node_id: str):
+    node = get_question_bank_node(node_id)
+    if not node:
+        raise HTTPException(404, 'Question bank node not found')
+    return node
+
 # Google OAuth
-@api.post("/auth/google/init")
-async def google_init():
-    state = uuid.uuid4().hex
-    await db.google_auth_states.insert_one({
-        'state': state,
-        'status': 'pending',
-        'created_at': datetime.now(timezone.utc).isoformat()
-    })
-    return {'state': state}
+# ==================== RESOURCE ENDPOINTS ====================
 
-@api.get("/auth/google/callback", response_class=HTMLResponse)
-async def google_callback(state: str = ""):
-    html = f"""<!DOCTYPE html><html><body>
-    <p>Processing authentication...</p>
-    <script>
-    (async()=>{{
-        const hash=window.location.hash;
-        const match=hash.match(/session_id=([^&]+)/);
-        if(match){{
-            const sid=match[1];
-            await fetch('/api/auth/google/complete',{{
-                method:'POST',headers:{{'Content-Type':'application/json'}},
-                body:JSON.stringify({{state:'{state}',session_id:sid}})
-            }});
-            window.close();
-            document.body.innerHTML='<h2>Authentication successful! You can close this window.</h2>';
-        }}else{{
-            document.body.innerHTML='<h2>Authentication failed.</h2>';
-        }}
-    }})();
-    </script></body></html>"""
-    return HTMLResponse(html)
+@api.get("/resources/{node_id}/past-papers")
+async def get_past_papers(node_id: str):
+    papers = await db.past_papers.find({'node_id': node_id}, {'_id': 0}).sort('year', -1).to_list(100)
+    return papers
 
-@api.post("/auth/google/complete")
-async def google_complete(data: dict):
-    state = data.get('state', '')
-    session_id = data.get('session_id', '')
+@api.get("/resources/{node_id}/notes")
+async def get_notes(node_id: str, chapter_id: Optional[str] = None):
+    query = {'node_id': node_id}
+    if chapter_id:
+        query['chapter_id'] = chapter_id
+    notes = await db.study_notes.find(query, {'_id': 0}).to_list(100)
+    return notes
 
-    auth_state = await db.google_auth_states.find_one({'state': state}, {'_id': 0})
-    if not auth_state:
-        raise HTTPException(400, 'Invalid state')
+@api.get("/resources/{node_id}/videos")
+async def get_video_solutions(node_id: str):
+    videos = await db.video_solutions.find({'node_id': node_id}, {'_id': 0}).sort('created_at', -1).to_list(100)
+    return videos
 
-    try:
-        async with httpx.AsyncClient() as hc:
-            resp = await hc.get(
-                'https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data',
-                headers={'X-Session-ID': session_id}
-            )
-            if resp.status_code != 200:
-                raise HTTPException(400, 'Failed to verify session')
-            google_user = resp.json()
-    except Exception as e:
-        logger.error(f"Google auth error: {e}")
-        raise HTTPException(400, 'Authentication failed')
+@api.get("/resources/{node_id}/important-questions")
+async def get_important_questions(node_id: str):
+    questions = await db.important_questions.find({'node_id': node_id}, {'_id': 0}).sort('frequency_in_exams', -1).to_list(100)
+    return questions
 
-    existing = await db.users.find_one({'email': google_user['email']}, {'_id': 0})
-    if existing:
-        user_id = existing['user_id']
-        await db.users.update_one(
-            {'user_id': user_id},
-            {'$set': {'name': google_user['name'], 'picture': google_user.get('picture', '')}}
-        )
-    else:
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            'user_id': user_id,
-            'name': google_user['name'],
-            'email': google_user['email'],
-            'picture': google_user.get('picture', ''),
-            'exam_type': 'SEE',
-            'subscription_status': 'free',
-            'daily_streak': 1,
-            'last_active': datetime.now(timezone.utc).isoformat(),
-            'created_at': datetime.now(timezone.utc).isoformat()
+@api.get("/resources/{node_id}/assignments")
+async def get_assignments(node_id: str):
+    assignments = await db.assignments.find({'node_id': node_id}, {'_id': 0}).sort('due_date', 1).to_list(100)
+    return assignments
+
+@api.get("/resources/{node_id}/stats")
+async def get_resource_stats(node_id: str):
+    papers_count = await db.past_papers.count_documents({'node_id': node_id})
+    notes_count = await db.study_notes.count_documents({'node_id': node_id})
+    videos_count = await db.video_solutions.count_documents({'node_id': node_id})
+    imp_q_count = await db.important_questions.count_documents({'node_id': node_id})
+    assign_count = await db.assignments.count_documents({'node_id': node_id})
+    return {
+        'node_id': node_id,
+        'past_papers_count': papers_count,
+        'notes_count': notes_count,
+        'videos_count': videos_count,
+        'important_questions_count': imp_q_count,
+        'assignments_count': assign_count,
+        'total_resources': papers_count + notes_count + videos_count + imp_q_count + assign_count,
+    }
+
+@api.post("/resources/assignments")
+async def create_assignment(data: dict, user: dict = Depends(get_current_user)):
+    assignment = {
+        'assignment_id': f"assign_{uuid.uuid4().hex[:12]}",
+        'node_id': data.get('node_id', ''),
+        'chapter_id': data.get('chapter_id'),
+        'title': data.get('title', ''),
+        'description': data.get('description', ''),
+        'instructions': data.get('instructions', ''),
+        'posted_by_teacher': user['email'],
+        'posted_by_name': user['name'],
+        'due_date': data.get('due_date', ''),
+        'file_url': data.get('file_url'),
+        'total_points': data.get('total_points'),
+        'status': 'published',
+        'submissions': [],
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.assignments.insert_one(assignment)
+    return {'assignment_id': assignment['assignment_id'], 'success': True}
+
+@api.post("/resources/assignments/{assignment_id}/submit")
+async def submit_assignment(assignment_id: str, data: dict, user: dict = Depends(get_current_user)):
+    assignment = await db.assignments.find_one({'assignment_id': assignment_id}, {'_id': 0})
+    if not assignment:
+        raise HTTPException(404, 'Assignment not found')
+    submission = {
+        'submission_id': f"sub_{uuid.uuid4().hex[:12]}",
+        'assignment_id': assignment_id,
+        'student_id': user['user_id'],
+        'submission_url': data.get('submission_url', ''),
+        'submission_text': data.get('submission_text'),
+        'submitted_at': datetime.now(timezone.utc).isoformat(),
+        'graded': False,
+    }
+    await db.student_submissions.insert_one(submission)
+    await db.assignments.update_one({'assignment_id': assignment_id}, {'$push': {'submissions': submission}})
+    return {'submission_id': submission['submission_id'], 'success': True}
+
+@api.get("/resources/assignments/{assignment_id}/submissions")
+async def get_assignment_submissions(assignment_id: str, user: dict = Depends(get_current_user)):
+    submissions = await db.student_submissions.find({'assignment_id': assignment_id}, {'_id': 0}).sort('submitted_at', -1).to_list(500)
+    return submissions
+
+# ==================== SEARCH & ANALYTICS ENDPOINTS ====================
+
+@api.get("/search")
+async def search_resources(
+    q: Optional[str] = None,
+    subject: Optional[str] = None,
+    university: Optional[str] = None,
+    year: Optional[int] = None,
+    semester: Optional[int] = None,
+    faculty: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    sort_by: str = "latest",
+    limit: int = 50
+):
+    """Global search across all resource types with keyword and field filtering."""
+    conditions = []
+
+    if q:
+        conditions.append({
+            '$or': [
+                {'title': {'$regex': q, '$options': 'i'}},
+                {'description': {'$regex': q, '$options': 'i'}},
+                {'content': {'$regex': q, '$options': 'i'}},
+                {'tags': {'$elemMatch': {'$regex': q, '$options': 'i'}}}
+            ]
         })
 
-    await update_streak(user_id)
-    token = create_token(user_id)
-    user = await db.users.find_one({'user_id': user_id}, {'_id': 0})
+    if subject:
+        conditions.append({'node_id': {'$regex': subject.lower(), '$options': 'i'}})
 
-    await db.google_auth_states.update_one(
-        {'state': state},
-        {'$set': {'status': 'completed', 'token': token, 'user': {
-            'user_id': user['user_id'], 'name': user['name'], 'email': user['email'],
-            'exam_type': user.get('exam_type', 'SEE'),
-            'subscription_status': user.get('subscription_status', 'free'),
-            'daily_streak': user.get('daily_streak', 0)
-        }}}
-    )
+    if year:
+        conditions.append({'year': year})
+
+    if semester:
+        conditions.append({'semester': semester})
+
+    sort_spec = []
+    if sort_by == "most_viewed":
+        sort_spec = [('view_count', -1)]
+    elif sort_by == "most_downloaded":
+        sort_spec = [('download_count', -1)]
+    else:
+        sort_spec = [('created_at', -1)]
+
+    query = {'$and': conditions} if conditions else {}
+    results = []
+
+    if not resource_type or resource_type == "papers":
+        papers = await db.past_papers.find(query, {'_id': 0}).sort(*sort_spec).to_list(limit)
+        for paper in papers:
+            results.append({
+                'resource_type': 'paper',
+                'resource_id': paper.get('paper_id'),
+                'title': paper.get('title'),
+                'description': f"{paper.get('exam_type', 'Regular')} - {paper.get('year')}",
+                'node_id': paper.get('node_id'),
+                'year': paper.get('year'),
+                'semester': paper.get('semester'),
+                'exam_type': paper.get('exam_type'),
+                'view_count': paper.get('view_count', 0),
+                'download_count': paper.get('download_count', 0),
+                'created_at': paper.get('created_at'),
+                'url': paper.get('pdf_url'),
+                'tags': ['pdf', paper.get('exam_type', '')],
+            })
+
+    if not resource_type or resource_type == "notes":
+        notes = await db.study_notes.find(query, {'_id': 0}).sort(*sort_spec).to_list(limit)
+        for note in notes:
+            results.append({
+                'resource_type': 'note',
+                'resource_id': note.get('note_id'),
+                'title': note.get('title'),
+                'description': f"By {note.get('author', 'Unknown')}",
+                'node_id': note.get('node_id'),
+                'author': note.get('author'),
+                'view_count': note.get('view_count', 0),
+                'download_count': note.get('download_count', 0),
+                'created_at': note.get('created_at'),
+                'url': note.get('pdf_url'),
+                'tags': note.get('tags', []) + ['note'],
+            })
+
+    if not resource_type or resource_type == "videos":
+        videos = await db.video_solutions.find(query, {'_id': 0}).sort(*sort_spec).to_list(limit)
+        for video in videos:
+            results.append({
+                'resource_type': 'video',
+                'resource_id': video.get('video_id'),
+                'title': video.get('title'),
+                'description': video.get('description', ''),
+                'node_id': video.get('node_id'),
+                'view_count': video.get('view_count', 0),
+                'download_count': video.get('download_count', 0),
+                'created_at': video.get('created_at'),
+                'thumbnail_url': video.get('thumbnail_url'),
+                'url': video.get('video_url'),
+                'tags': ['video', video.get('video_type', 'youtube')],
+            })
+
+    if not resource_type or resource_type == "assignments":
+        assignments = await db.assignments.find(query, {'_id': 0}).sort(*sort_spec).to_list(limit)
+        for assignment in assignments:
+            results.append({
+                'resource_type': 'assignment',
+                'resource_id': assignment.get('assignment_id'),
+                'title': assignment.get('title'),
+                'description': f"Due {assignment.get('due_date', 'N/A')}",
+                'node_id': assignment.get('node_id'),
+                'author': assignment.get('posted_by_name'),
+                'view_count': assignment.get('view_count', 0),
+                'download_count': assignment.get('download_count', 0),
+                'created_at': assignment.get('created_at'),
+                'url': assignment.get('file_url'),
+                'tags': ['assignment', assignment.get('status', '')],
+            })
+
+    if sort_by == "most_viewed":
+        results.sort(key=lambda x: x['view_count'], reverse=True)
+    elif sort_by == "most_downloaded":
+        results.sort(key=lambda x: x['download_count'], reverse=True)
+    else:
+        results.sort(key=lambda x: x['created_at'], reverse=True)
+
+    return results[:limit]
+
+
+@api.get("/uploads/signed-url")
+async def get_s3_signed_url(file_name: str, content_type: str = 'application/octet-stream', acl: str = 'private'):
+    """Generate a presigned PUT URL for direct S3 uploads.
+    Returns upload_url, object_key and optional public_url when acl is public-read.
+    """
+    if not AWS_S3_BUCKET:
+        raise HTTPException(500, 'S3 bucket not configured')
+
+    s3_client = None
+    try:
+        import boto3
+        s3_client = boto3.client('s3', region_name=AWS_REGION)
+    except Exception as e:
+        logger.error(f"S3 client init error: {e}")
+        raise HTTPException(500, 'S3 client initialization failed')
+
+    # Create a safe object key
+    key = f"uploads/{uuid.uuid4().hex}_{os.path.basename(file_name)}"
+    try:
+        params = {'Bucket': AWS_S3_BUCKET, 'Key': key, 'ContentType': content_type}
+        if acl:
+            params['ACL'] = acl
+        upload_url = s3_client.generate_presigned_url('put_object', Params=params, ExpiresIn=3600)
+        public_url = None
+        if acl == 'public-read':
+            public_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{key}"
+        return {'upload_url': upload_url, 'object_key': key, 'public_url': public_url, 'expires_in': 3600}
+    except Exception as e:
+        logger.error(f"Error generating presigned url: {e}")
+        raise HTTPException(500, 'Failed to generate presigned url')
+
+
+@api.post("/uploads/complete")
+async def complete_upload(data: dict, user: dict = Depends(get_current_user)):
+    """Register a completed upload. Expects { object_key, public_url?, file_name?, content_type? }.
+    Verifies object exists in S3 when bucket is configured and stores metadata in `uploads` collection.
+    Returns {'object_key','url','size','success': True}
+    """
+    object_key = data.get('object_key')
+    public_url = data.get('public_url')
+    file_name = data.get('file_name')
+    content_type = data.get('content_type')
+
+    if not object_key:
+        raise HTTPException(400, 'object_key is required')
+
+    size = None
+    final_url = public_url
+
+    if AWS_S3_BUCKET:
+        try:
+            import boto3
+            s3_client = boto3.client('s3', region_name=AWS_REGION)
+            head = s3_client.head_object(Bucket=AWS_S3_BUCKET, Key=object_key)
+            size = int(head.get('ContentLength', 0))
+            # If public_url not provided, construct one for public-read objects
+            if not final_url:
+                final_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{object_key}"
+        except Exception as e:
+            logger.warning(f"S3 head_object failed for {object_key}: {e}")
+            # If head_object fails, still allow registration but mark size as None
+            size = None
+            if not final_url:
+                final_url = None
+    else:
+        # No S3 configured; rely on client-provided public_url or object_key
+        final_url = final_url or object_key
+
+    upload_doc = {
+        'object_key': object_key,
+        'url': final_url,
+        'file_name': file_name,
+        'content_type': content_type,
+        'size': size,
+        'uploaded_by': user.get('user_id') if user else None,
+        'uploaded_by_name': user.get('name') if user else None,
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+
+    try:
+        await db.uploads.insert_one(upload_doc)
+    except Exception:
+        # If uploads collection doesn't exist or DB not configured, continue
+        logger.warning('Could not write upload metadata to DB')
+
+    return {'object_key': object_key, 'url': final_url, 'size': size, 'success': True}
+
+@api.post("/resources/{resource_type}/{resource_id}/view")
+async def track_resource_view(resource_type: str, resource_id: str):
+    """Track resource view for analytics."""
+    collection_map = {
+        'paper': 'past_papers',
+        'note': 'study_notes',
+        'video': 'video_solutions',
+        'assignment': 'assignments',
+    }
+
+    if resource_type not in collection_map:
+        raise HTTPException(400, 'Invalid resource type')
+
+    collection_name = collection_map[resource_type]
+    id_field = {'paper': 'paper_id', 'note': 'note_id', 'video': 'video_id', 'assignment': 'assignment_id'}[resource_type]
+
+    result = await db[collection_name].update_one({id_field: resource_id}, {'$inc': {'view_count': 1}})
+    if result.matched_count == 0:
+        raise HTTPException(404, 'Resource not found')
     return {'success': True}
 
-@api.get("/auth/google/status")
-async def google_status(state: str):
-    auth_state = await db.google_auth_states.find_one({'state': state}, {'_id': 0})
-    if not auth_state:
-        raise HTTPException(404, 'State not found')
-    if auth_state['status'] == 'completed':
-        return {'status': 'completed', 'token': auth_state['token'], 'user': auth_state['user']}
-    return {'status': 'pending'}
+@api.post("/resources/{resource_type}/{resource_id}/download")
+async def track_resource_download(resource_type: str, resource_id: str):
+    """Track resource download for analytics."""
+    collection_map = {
+        'paper': 'past_papers',
+        'note': 'study_notes',
+        'video': 'video_solutions',
+        'assignment': 'assignments',
+    }
+
+    if resource_type not in collection_map:
+        raise HTTPException(400, 'Invalid resource type')
+
+    collection_name = collection_map[resource_type]
+    id_field = {'paper': 'paper_id', 'note': 'note_id', 'video': 'video_id', 'assignment': 'assignment_id'}[resource_type]
+
+    result = await db[collection_name].update_one({id_field: resource_id}, {'$inc': {'download_count': 1}})
+    if result.matched_count == 0:
+        raise HTTPException(404, 'Resource not found')
+    return {'success': True}
+
+@api.get("/analytics/trending")
+async def get_trending_resources(days: int = 7, limit: int = 10):
+    """Get trending resources based on views and downloads."""
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_iso = cutoff_date.isoformat()
+    query = {'created_at': {'$gte': cutoff_iso}}
+    sort_by = [('view_count', -1), ('download_count', -1)]
+
+    results = []
+    papers = await db.past_papers.find(query, {'_id': 0}).sort(*sort_by).to_list(limit)
+    results.extend([{'type': 'paper', **p} for p in papers])
+
+    notes = await db.study_notes.find(query, {'_id': 0}).sort(*sort_by).to_list(limit)
+    results.extend([{'type': 'note', **n} for n in notes])
+
+    videos = await db.video_solutions.find(query, {'_id': 0}).sort(*sort_by).to_list(limit)
+    results.extend([{'type': 'video', **v} for v in videos])
+
+    results.sort(key=lambda x: (x.get('view_count', 0) + x.get('download_count', 0)), reverse=True)
+    return results[:limit]
+
+# ==================== ADMIN & TEACHER ROUTES ====================
+
+
+def _require_role(user: dict, allowed: List[str]):
+    if not user or user.get('role') not in allowed:
+        raise HTTPException(403, 'Permission denied')
+
+
+@api.post("/admin/universities")
+async def create_university(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    uni = {
+        'university_id': data.get('university_id', f"uni_{uuid.uuid4().hex[:8]}"),
+        'name': data.get('name'),
+        'description': data.get('description'),
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    await db.universities.insert_one(uni)
+    return {'success': True, 'university': uni}
+
+
+@api.post("/admin/faculties")
+async def create_faculty(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    fac = {
+        'faculty_id': data.get('faculty_id', f"fac_{uuid.uuid4().hex[:8]}"),
+        'name': data.get('name'),
+        'university_id': data.get('university_id'),
+        'description': data.get('description'),
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    await db.faculties.insert_one(fac)
+    return {'success': True, 'faculty': fac}
+
+
+@api.post("/admin/categories")
+async def create_category(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    cat = {
+        'category_id': data.get('category_id', f"cat_{uuid.uuid4().hex[:8]}"),
+        'title': data.get('title'),
+        'parent_id': data.get('parent_id'),
+        'meta': data.get('meta', {}),
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    await db.categories.insert_one(cat)
+    return {'success': True, 'category': cat}
+
+
+@api.post("/admin/resources/{resource_type}/{resource_id}/feature")
+async def feature_resource(resource_type: str, resource_id: str, data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    collection_map = {
+        'paper': 'past_papers',
+        'note': 'study_notes',
+        'video': 'video_solutions',
+        'assignment': 'assignments'
+    }
+    if resource_type not in collection_map:
+        raise HTTPException(400, 'Invalid resource type')
+    collection = collection_map[resource_type]
+    update = {'$set': {'featured': bool(data.get('featured', True))}}
+    if data.get('featured_until'):
+        update['$set']['featured_until'] = data.get('featured_until')
+    await db[collection].update_one({f"{resource_type}_id": resource_id} if resource_type != 'paper' else {'paper_id': resource_id}, update)
+    return {'success': True}
+
+
+@api.post("/admin/resources/{resource_type}/{resource_id}/approve")
+async def approve_resource(resource_type: str, resource_id: str, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    collection_map = {
+        'paper': 'past_papers',
+        'note': 'study_notes',
+        'video': 'video_solutions',
+        'assignment': 'assignments'
+    }
+    if resource_type not in collection_map:
+        raise HTTPException(400, 'Invalid resource type')
+    collection = collection_map[resource_type]
+    id_field = {'paper': 'paper_id', 'note': 'note_id', 'video': 'video_id', 'assignment': 'assignment_id'}[resource_type]
+    result = await db[collection].update_one({id_field: resource_id}, {'$set': {'approved': True}})
+    if result.matched_count == 0:
+        raise HTTPException(404, 'Resource not found')
+    return {'success': True}
+
+
+@api.patch("/admin/resources/{resource_type}/{resource_id}")
+async def edit_resource_metadata(resource_type: str, resource_id: str, data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    collection_map = {
+        'paper': 'past_papers',
+        'note': 'study_notes',
+        'video': 'video_solutions',
+        'assignment': 'assignments'
+    }
+    if resource_type not in collection_map:
+        raise HTTPException(400, 'Invalid resource type')
+    collection = collection_map[resource_type]
+    id_field = {'paper': 'paper_id', 'note': 'note_id', 'video': 'video_id', 'assignment': 'assignment_id'}[resource_type]
+    update = {'$set': data}
+    result = await db[collection].update_one({id_field: resource_id}, update)
+    if result.matched_count == 0:
+        raise HTTPException(404, 'Resource not found')
+    return {'success': True}
+
+
+@api.get("/admin/pending-uploads")
+async def list_pending_uploads(user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    pending = {}
+    pending['papers'] = await db.past_papers.find({'approved': False}, {'_id': 0}).to_list(100)
+    pending['notes'] = await db.study_notes.find({'approved': False}, {'_id': 0}).to_list(100)
+    pending['videos'] = await db.video_solutions.find({'approved': False}, {'_id': 0}).to_list(100)
+    pending['assignments'] = await db.assignments.find({'approved': False}, {'_id': 0}).to_list(100)
+    return pending
+
+
+@api.post("/admin/users/{user_id}/role")
+async def set_user_role(user_id: str, data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['admin'])
+    role = data.get('role')
+    if role not in ['admin', 'teacher', 'student']:
+        raise HTTPException(400, 'Invalid role')
+    result = await db.users.update_one({'user_id': user_id}, {'$set': {'role': role}})
+    if result.matched_count == 0:
+        raise HTTPException(404, 'User not found')
+    return {'success': True, 'user_id': user_id, 'role': role}
+
+
+@api.post("/teacher/notes")
+async def teacher_upload_note(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['teacher', 'admin'])
+    note = {
+        'note_id': f"note_{uuid.uuid4().hex[:12]}",
+        'node_id': data.get('node_id', ''),
+        'chapter_id': data.get('chapter_id'),
+        'title': data.get('title', ''),
+        'content': data.get('content', ''),
+        'author': user.get('name', ''),
+        'author_email': user.get('email'),
+        'tags': data.get('tags', []),
+        'downloadable_pdf': data.get('downloadable_pdf', True),
+        'pdf_url': data.get('pdf_url'),
+        'markdown': data.get('markdown', True),
+        'view_count': 0,
+        'download_count': 0,
+        'submitted_by': user.get('user_id'),
+        'submitted_by_name': user.get('name'),
+        'approved': False,
+        'featured': False,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.study_notes.insert_one(note)
+    return {'note_id': note['note_id'], 'success': True}
+
+
+@api.post("/teacher/papers")
+async def teacher_upload_paper(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['teacher', 'admin'])
+    paper = {
+        'paper_id': f"paper_{uuid.uuid4().hex[:12]}",
+        'node_id': data.get('node_id', ''),
+        'title': data.get('title', ''),
+        'year': data.get('year', 0),
+        'semester': data.get('semester'),
+        'exam_type': data.get('exam_type', 'regular'),
+        'pdf_url': data.get('pdf_url', ''),
+        'pdf_file_size': data.get('pdf_file_size', 0),
+        'downloadable': data.get('downloadable', True),
+        'preview_in_app': data.get('preview_in_app', True),
+        'question_count': data.get('question_count', 0),
+        'view_count': 0,
+        'download_count': 0,
+        'submitted_by': user.get('user_id'),
+        'submitted_by_name': user.get('name'),
+        'approved': False,
+        'featured': False,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.past_papers.insert_one(paper)
+    return {'paper_id': paper['paper_id'], 'success': True}
+
+
+@api.post("/teacher/assignments")
+async def teacher_create_assignment(data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['teacher', 'admin'])
+    assignment = {
+        'assignment_id': f"assign_{uuid.uuid4().hex[:12]}",
+        'node_id': data.get('node_id', ''),
+        'chapter_id': data.get('chapter_id'),
+        'title': data.get('title', ''),
+        'description': data.get('description', ''),
+        'instructions': data.get('instructions', ''),
+        'posted_by_teacher': user.get('email'),
+        'posted_by_name': user.get('name'),
+        'due_date': data.get('due_date', ''),
+        'file_url': data.get('file_url'),
+        'total_points': data.get('total_points'),
+        'status': data.get('status', 'published'),
+        'submissions': [],
+        'view_count': 0,
+        'download_count': 0,
+        'submitted_by': user.get('user_id'),
+        'submitted_by_name': user.get('name'),
+        'approved': data.get('approved', False),
+        'featured': False,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.assignments.insert_one(assignment)
+    return {'assignment_id': assignment['assignment_id'], 'success': True}
+
+
+@api.post("/teacher/assignments/{assignment_id}/submissions/{submission_id}/reply")
+async def teacher_reply_submission(assignment_id: str, submission_id: str, data: dict, user: dict = Depends(get_current_user)):
+    _require_role(user, ['teacher', 'admin'])
+    # Append a reply to the student_submissions doc
+    reply = {
+        'teacher_id': user.get('user_id'),
+        'teacher_name': user.get('name'),
+        'message': data.get('message', ''),
+        'created_at': datetime.now(timezone.utc).isoformat()
+    }
+    result = await db.student_submissions.update_one({'submission_id': submission_id, 'assignment_id': assignment_id}, {'$push': {'teacher_replies': reply}})
+    if result.matched_count == 0:
+        raise HTTPException(404, 'Submission not found')
+    # Also update the embedded submission inside assignment document if present
+    await db.assignments.update_one({'assignment_id': assignment_id, 'submissions.submission_id': submission_id}, {'$push': {'submissions.$.teacher_replies': reply}})
+    return {'success': True, 'reply': reply}
+
 
 # ==================== CONTENT ROUTES ====================
 
@@ -1002,6 +1537,56 @@ async def seed_data():
                      neb_qs + english_qs + social_qs)
     await db.questions.insert_many(all_questions)
 
+    # Seed Past Question Papers
+    past_papers = [
+        {'paper_id': 'pp_001', 'node_id': 'subject-c-programming', 'title': 'BIT 3rd Semester DBMS 2080', 'year': 2080, 'semester': 3, 'exam_type': 'regular', 'pdf_url': 'https://example.com/bit3-dbms-2080.pdf', 'pdf_file_size': 2048000, 'downloadable': True, 'preview_in_app': True, 'question_count': 8, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'paper_id': 'pp_002', 'node_id': 'subject-c-programming', 'title': 'BIT 3rd Semester DBMS 2079 (Back)', 'year': 2079, 'semester': 3, 'exam_type': 'back', 'pdf_url': 'https://example.com/bit3-dbms-2079-back.pdf', 'pdf_file_size': 1800000, 'downloadable': True, 'preview_in_app': True, 'question_count': 6, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'paper_id': 'pp_003', 'node_id': 'subject-mathematics', 'title': 'SEE Mathematics 2080', 'year': 2080, 'semester': None, 'exam_type': 'regular', 'pdf_url': 'https://example.com/see-math-2080.pdf', 'pdf_file_size': 1500000, 'downloadable': True, 'preview_in_app': True, 'question_count': 10, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'paper_id': 'pp_004', 'node_id': 'subject-physics', 'title': 'NEB Physics 2080', 'year': 2080, 'semester': None, 'exam_type': 'regular', 'pdf_url': 'https://example.com/neb-physics-2080.pdf', 'pdf_file_size': 2200000, 'downloadable': True, 'preview_in_app': True, 'question_count': 12, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+    ]
+    await db.past_papers.insert_many(past_papers)
+
+    # Seed Study Notes
+    study_notes = [
+        {'note_id': 'note_001', 'node_id': 'subject-c-programming', 'chapter_id': None, 'title': 'C Programming Fundamentals', 'content': '# C Programming\n\n## Introduction\nC is a procedural language...\n\n## Variables\nVariables are named storage locations...', 'author': 'Prof. Ram Sharma', 'author_email': 'ram@example.com', 'tags': ['basics', 'syntax'], 'downloadable_pdf': True, 'pdf_url': 'https://example.com/c-basics.pdf', 'markdown': True, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'note_id': 'note_002', 'node_id': 'subject-mathematics', 'chapter_id': None, 'title': 'Algebra Quick Reference', 'content': '# Algebraic Formulas\n\n- (a+b)² = a² + 2ab + b²\n- (a-b)² = a² - 2ab + b²', 'author': 'Prof. Sita Devi', 'author_email': 'sita@example.com', 'tags': ['algebra', 'formulas'], 'downloadable_pdf': True, 'pdf_url': 'https://example.com/algebra-formulas.pdf', 'markdown': True, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+    ]
+    await db.study_notes.insert_many(study_notes)
+
+    # Seed Video Solutions
+    videos = [
+        {'video_id': 'vid_001', 'node_id': 'subject-c-programming', 'chapter_id': None, 'question_id': None, 'title': 'C Loops Tutorial', 'description': 'Complete guide to loops in C programming', 'video_url': 'https://www.youtube.com/embed/dQw4w9WgXcQ', 'video_type': 'youtube', 'duration_seconds': 1200, 'thumbnail_url': 'https://example.com/thumb1.jpg', 'chapter_mapping': {'chapter': 'loops', 'topics': ['for', 'while', 'do-while']}, 'timestamp_chapters': [{'time': 0, 'chapter': 'Introduction'}, {'time': 120, 'chapter': 'For Loops'}, {'time': 400, 'chapter': 'While Loops'}], 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'video_id': 'vid_002', 'node_id': 'subject-physics', 'chapter_id': None, 'question_id': 'q_026', 'title': 'Kinematics Problem Solving', 'description': 'Step-by-step solution to kinematics problems', 'video_url': 'https://www.youtube.com/embed/abcdEFG', 'video_type': 'youtube', 'duration_seconds': 900, 'thumbnail_url': 'https://example.com/thumb2.jpg', 'chapter_mapping': {'chapter': 'kinematics', 'topics': ['displacement', 'velocity', 'acceleration']}, 'timestamp_chapters': [], 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+    ]
+    await db.video_solutions.insert_many(videos)
+
+    # Seed Important Questions
+    important_qs = [
+        {'importance_id': 'imp_001', 'question_id': 'q_001', 'node_id': 'subject-mathematics', 'importance_tags': ['very_important', 'repeated_in_exam'], 'reason': 'Set theory is foundational and appears in every exam', 'frequency_in_exams': 5, 'last_appeared_year': 2080, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'importance_id': 'imp_002', 'question_id': 'q_011', 'node_id': 'subject-physics', 'importance_tags': ['likely_exam_question'], 'reason': 'Basic physics concepts always asked', 'frequency_in_exams': 6, 'last_appeared_year': 2080, 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+    ]
+    await db.important_questions.insert_many(important_qs)
+
+    # Seed Assignments
+    assignments = [
+        {'assignment_id': 'assign_001', 'node_id': 'subject-c-programming', 'chapter_id': None, 'title': 'Calculate Sum of Digits', 'description': 'Write a C program to calculate the sum of digits of a number', 'instructions': '1. Write a C function that takes an integer\n2. Calculate sum of its digits\n3. Return the result', 'posted_by_teacher': 'prof.ram@school.com', 'posted_by_name': 'Prof. Ram', 'due_date': '2081-06-15T23:59:59', 'file_url': 'https://example.com/assignment1.pdf', 'total_points': 10.0, 'status': 'published', 'submissions': [], 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+        {'assignment_id': 'assign_002', 'node_id': 'subject-mathematics', 'chapter_id': None, 'title': 'Solve Quadratic Equations', 'description': 'Solve 5 quadratic equations using different methods', 'instructions': '1. Solve using factorization\n2. Solve using quadratic formula\n3. Show all steps clearly', 'posted_by_teacher': 'prof.sita@school.com', 'posted_by_name': 'Prof. Sita', 'due_date': '2081-06-20T23:59:59', 'file_url': None, 'total_points': 15.0, 'status': 'published', 'submissions': [], 'created_at': datetime.now(timezone.utc).isoformat(), 'updated_at': datetime.now(timezone.utc).isoformat()},
+    ]
+    await db.assignments.insert_many(assignments)
+
+    # Seed indexes for new collections
+    await db.past_papers.create_index('node_id')
+    await db.past_papers.create_index('year')
+    await db.study_notes.create_index('node_id')
+    await db.study_notes.create_index('chapter_id')
+    await db.video_solutions.create_index('node_id')
+    await db.important_questions.create_index('question_id')
+    await db.important_questions.create_index('node_id')
+    await db.assignments.create_index('node_id')
+    await db.assignments.create_index('posted_by_teacher')
+    await db.student_submissions.create_index('assignment_id')
+    await db.student_submissions.create_index('student_id')
+
     # Create indexes
     await db.users.create_index('email', unique=True)
     await db.users.create_index('user_id', unique=True)
@@ -1013,6 +1598,7 @@ async def seed_data():
     await db.users.create_index('referral_code', unique=True, sparse=True)
 
     logger.info(f"Seeded: {len(exams)} exams, {len(all_subjects)} subjects, {len(all_chapters)} chapters, {len(all_questions)} questions")
+    logger.info(f"Seeded: {len(past_papers)} past papers, {len(study_notes)} notes, {len(videos)} videos, {len(important_qs)} important Qs, {len(assignments)} assignments")
 
 async def migrate_existing_users():
     """Add referral_code to users that don't have one."""

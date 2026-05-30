@@ -131,6 +131,115 @@ class TestHealth:
         assert 'difficulty' in question
         print(f"✓ Questions endpoint working - {len(data)} questions returned")
 
+    def test_question_bank_roots_endpoint(self, api_client):
+        """GET /api/question-bank returns top-level hierarchical categories"""
+        response = api_client.get(f"{BASE_URL}/api/question-bank")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) >= 5, "Should expose the major question-bank categories"
+
+        titles = {item['title'] for item in data}
+        expected_titles = {
+            'Level',
+            'University / Board',
+            'Faculty / Program',
+            'Year / Semester',
+            'Subject',
+        }
+        assert expected_titles.issubset(titles)
+        print(f"✓ Question bank roots endpoint working - {len(data)} roots found")
+
+    def test_question_bank_node_endpoint(self, api_client):
+        """GET /api/question-bank/{node_id} returns breadcrumbs and nested node data"""
+        response = api_client.get(f"{BASE_URL}/api/question-bank/subject-c-programming")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert 'node' in data
+        assert 'breadcrumbs' in data
+        assert isinstance(data['breadcrumbs'], list)
+        assert len(data['breadcrumbs']) >= 2
+
+        node = data['node']
+        assert node['id'] == 'subject-c-programming'
+        assert node['title'] == 'C Programming'
+        assert 'questionCount' in node
+        assert 'noteCount' in node
+        assert node.get('children') == []
+        print("✓ Question bank node endpoint working - C Programming leaf returned")
+
+    def test_resources_past_papers_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/past-papers returns past question papers"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/past-papers")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        # Papers should be sorted by year (descending)
+        if len(data) > 1:
+            assert data[0]['year'] >= data[1]['year']
+        print(f"✓ Past papers endpoint working - {len(data)} papers found")
+
+    def test_resources_notes_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/notes returns study notes"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/notes")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            note = data[0]
+            assert 'note_id' in note
+            assert 'title' in note
+            assert 'author' in note
+            assert 'tags' in note
+        print(f"✓ Study notes endpoint working - {len(data)} notes found")
+
+    def test_resources_videos_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/videos returns video solutions"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/videos")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            video = data[0]
+            assert 'video_id' in video
+            assert 'title' in video
+            assert 'video_url' in video
+        print(f"✓ Video solutions endpoint working - {len(data)} videos found")
+
+    def test_resources_stats_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/stats returns resource statistics"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/stats")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert 'node_id' in data
+        assert 'past_papers_count' in data
+        assert 'notes_count' in data
+        assert 'videos_count' in data
+        assert 'important_questions_count' in data
+        assert 'assignments_count' in data
+        assert 'total_resources' in data
+        print(f"✓ Resource stats endpoint working - {data['total_resources']} total resources")
+
+    def test_resources_assignments_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/assignments returns assignments"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/assignments")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            assignment = data[0]
+            assert 'assignment_id' in assignment
+            assert 'title' in assignment
+            assert 'posted_by_teacher' in assignment
+        print(f"✓ Assignments endpoint working - {len(data)} assignments found")
+
 # ==================== AUTH TESTS ====================
 
 class TestAuth:
@@ -582,6 +691,148 @@ class TestReferral:
         
         assert response.status_code == 400, "Should reject duplicate referral usage"
         print("✓ Duplicate referral rejection working")
+
+# ==================== RESOURCE TESTS ====================
+
+class TestResourceEndpoints:
+    """Tests for Past Papers, Notes, Videos, Assignments, and Resource Stats"""
+
+    def test_resources_stats_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/stats returns resource statistics"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/stats")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert 'node_id' in data
+        assert 'past_papers_count' in data
+        assert 'notes_count' in data
+        assert 'videos_count' in data
+        assert 'important_questions_count' in data
+        assert 'assignments_count' in data
+        assert 'total_resources' in data
+        print(f"✓ Resource stats endpoint working - {data['total_resources']} total resources")
+
+    def test_resources_past_papers_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/past-papers returns past question papers"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/past-papers")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            paper = data[0]
+            assert 'paper_id' in paper
+            assert 'title' in paper
+            assert 'year' in paper
+        print(f"✓ Past papers endpoint working - {len(data)} papers found")
+
+    def test_resources_notes_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/notes returns study notes"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/notes")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            note = data[0]
+            assert 'note_id' in note
+            assert 'title' in note
+            assert 'author' in note
+        print(f"✓ Study notes endpoint working - {len(data)} notes found")
+
+    def test_resources_videos_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/videos returns video solutions"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/videos")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            video = data[0]
+            assert 'video_id' in video
+            assert 'title' in video
+            assert 'video_url' in video
+        print(f"✓ Video solutions endpoint working - {len(data)} videos found")
+
+    def test_resources_assignments_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/assignments returns assignments"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-c-programming/assignments")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            assignment = data[0]
+            assert 'assignment_id' in assignment
+            assert 'title' in assignment
+            assert 'posted_by_teacher' in assignment
+        print(f"✓ Assignments endpoint working - {len(data)} assignments found")
+
+    def test_resources_important_questions_endpoint(self, api_client):
+        """GET /api/resources/{node_id}/important-questions returns important questions"""
+        response = api_client.get(f"{BASE_URL}/api/resources/subject-mathematics/important-questions")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert isinstance(data, list)
+        if len(data) > 0:
+            imp_q = data[0]
+            assert 'question_id' in imp_q
+            assert 'importance_tags' in imp_q
+        print(f"✓ Important questions endpoint working - {len(data)} important questions found")
+
+    def test_get_s3_signed_url(self, api_client):
+        """GET /api/uploads/signed-url returns presigned upload URL"""
+        params = {'file_name': 'test_upload.pdf', 'content_type': 'application/pdf'}
+        response = api_client.get(f"{BASE_URL}/api/uploads/signed-url", params=params)
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        data = response.json()
+        assert 'upload_url' in data
+        assert 'object_key' in data
+        assert 'expires_in' in data
+        print("✓ S3 signed-url endpoint working")
+
+    def test_teacher_upload_endpoints(self, api_client, test_user_token):
+        """Teacher endpoints for notes/papers/assignments accept uploads for review"""
+        headers = {"Authorization": f"Bearer {test_user_token}", "Content-Type": "application/json"}
+
+        # Upload a note
+        note_payload = {
+            'node_id': 'subject-c-programming',
+            'title': f'Test Note {os.urandom(3).hex()}',
+            'content': 'Sample note content for testing',
+            'pdf_url': 'https://example.com/test-note.pdf'
+        }
+        note_resp = api_client.post(f"{BASE_URL}/api/teacher/notes", json=note_payload, headers=headers)
+        assert note_resp.status_code == 200
+        note_data = note_resp.json()
+        assert 'note_id' in note_data
+
+        # Upload a paper
+        paper_payload = {
+            'node_id': 'subject-c-programming',
+            'title': f'Test Paper {os.urandom(3).hex()}',
+            'year': 2080,
+            'pdf_url': 'https://example.com/test-paper.pdf'
+        }
+        paper_resp = api_client.post(f"{BASE_URL}/api/teacher/papers", json=paper_payload, headers=headers)
+        assert paper_resp.status_code == 200
+        paper_data = paper_resp.json()
+        assert 'paper_id' in paper_data
+
+        # Create an assignment
+        assign_payload = {
+            'node_id': 'subject-c-programming',
+            'title': f'Test Assignment {os.urandom(3).hex()}',
+            'description': 'Solve these problems',
+            'file_url': 'https://example.com/assignment.pdf',
+            'due_date': '2081-07-01T23:59:59'
+        }
+        assign_resp = api_client.post(f"{BASE_URL}/api/teacher/assignments", json=assign_payload, headers=headers)
+        assert assign_resp.status_code == 200
+        assign_data = assign_resp.json()
+        assert 'assignment_id' in assign_data
+        print('✓ Teacher upload endpoints working')
 
 # ==================== CACHE TESTS ====================
 

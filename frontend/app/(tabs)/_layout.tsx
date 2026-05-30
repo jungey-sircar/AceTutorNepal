@@ -45,6 +45,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="question-bank"
+        options={{
+          title: 'Q & Notes',
+          tabBarIcon: ({ color, size }) => <Ionicons name="bookmarks" size={size} color={color} />,
+          tabBarTestID: 'tab-question-bank',
+        }}
+      />
+      <Tabs.Screen
         name="practice"
         options={{
           title: 'Practice',
